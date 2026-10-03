@@ -4,31 +4,40 @@
 
 using namespace std;
 
-const int BORAD_SIZE = 15;
+const int BOARD_SIZE = 15;
 const char EMPTY = '.';
 const char BLACK = 'X';
 const char WHITE = 'O';
 
 class Gomoku {
     private:
-        vector<vector<char>> borad;
+        vector<vector<char>> board;
         char currentPlayer;
     
     public:
         Gomoku(){
-            borad = vector<vector<char>>(BORAD_SIZE, vector<char>(BORAD_SIZE, EMPTY));
+            board = vector<vector<char>>(BOARD_SIZE, vector<char>(BOARD_SIZE, EMPTY));
             currentPlayer = BLACK;
         }
 
         void printBorad(){
             cout << "\n   ";
-            for(int i = 0; i < BORAD_SIZE; ++i){
-                cout << (i < 10?" ": "") << i << "";
+            for(int i = 0; i < BOARD_SIZE; ++i){
+                cout << (i < 10?" ": "") << i << " ";
             }
             cout << "\n";
+
+            for(int i = 0; i < BOARD_SIZE; ++i){
+                cout << (i < 10?" " : "") << i << " "; 
+                for(int j = 0; j < BOARD_SIZE; ++j){
+                    cout << " " << board[i][j] << " ";
+                }
+                cout << "\n";
+            }
         }
 };
 
 int main(){
-    cout << "hello";
+    Gomoku game;
+    game.printBorad();
 }
