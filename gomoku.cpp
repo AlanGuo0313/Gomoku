@@ -75,9 +75,25 @@ class Gomoku {
             }
             return false;
         }
+        //檢查是否平手
+        bool boardFull(){
+            for(int i = 0; i < BOARD_SIZE; ++i){
+                for(int j = 0; j < BOARD_SIZE; ++j){
+                    if(board[i][j] == EMPTY){
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        char getCurrentPlayer() const {return currentPlayer;}
+        void switchPlayer() {currentPlayer = (currentPlayer = BLACK) ? WHITE : BLACK;}
 };
 
 int main(){
     Gomoku game;
     game.printBorad();
+    cout << "Player " << game.getCurrentPlayer() << "'s turn.\n";
+    game.makeMove(7, 7);
 }
