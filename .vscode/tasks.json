@@ -8,9 +8,19 @@
             "args": [
                 "-fdiagnostics-color=always",
                 "-g",
-                "${fileDirname}\\*.cpp",
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                "-finput-charset=UTF-8",
+                "${workspaceFolder}/gomoku.cpp",
                 "-o",
-                "${fileDirname}/${fileBasenameNoExtension}.exe"
+                "${workspaceFolder}/gomoku.exe",
+                "-mwindows",
+                "-lgdi32",
+                "-lgdiplus",
+                "-luser32",
+                "-static-libgcc",
+                "-static-libstdc++"
             ],
             "options": {
                 "cwd": "${fileDirname}"
@@ -20,7 +30,7 @@
             ],
             "group": {
                 "kind": "build",
-                "isDefault": false
+                "isDefault": true
             },
             "detail": "編譯器: C:/mingw64/bin/g++.exe"
         },
@@ -43,7 +53,7 @@
             ],
             "group": {
                 "kind": "build",
-                "isDefault": true
+                "isDefault": false
             },
             "detail": "偵錯工具產生的工作。"
         }
