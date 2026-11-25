@@ -14,6 +14,14 @@ class Gomoku {
     private:
         vector<vector<char>> board;
         char currentPlayer;
+
+        struct Move {
+            int row;
+            int col;
+            char player;
+        };
+
+        vector<Move> moveHistory;
     
     public:
         Gomoku(){
@@ -47,6 +55,7 @@ class Gomoku {
         bool makeMove(int row, int col){
             if(isValidMove(row, col)){
                 board[row][col] = currentPlayer;
+                moveHistory.push_back({row, col, currentPlayer});
                 return true;
             }
             return false;
@@ -55,7 +64,7 @@ class Gomoku {
         bool checkWin(int row, int col){
             char Player = board[row][col];
 
-            //定義四個維度
+            // 定義四個檢查方向：橫向、直向及兩條斜線
             vector<int> dr({0,1,1,1});
             vector<int> dc({1,0,1,-1});
 
@@ -80,7 +89,7 @@ class Gomoku {
             }
             return false;
         }
-        //檢查是否平手
+        // 檢查棋盤是否已滿
         bool boardFull(){
             for(int i = 0; i < BOARD_SIZE; ++i){
                 for(int j = 0; j < BOARD_SIZE; ++j){
@@ -97,37 +106,77 @@ class Gomoku {
             if(currentPlayer == BLACK) currentPlayer = WHITE;
             else currentPlayer = BLACK;
         }
+
+        void resetGame() {
+            board.assign(BOARD_SIZE, vector<char>(BOARD_SIZE, EMPTY));
+            currentPlayer = BLACK;
+            moveHistory.clear();
+        }
+
+        bool undoMove() {
+            if(moveHistory.empty()) return false;
+
+            Move lastMove = moveHistory.back();
+            moveHistory.pop_back();
+
+            board[lastMove.row][lastMove.col] = EMPTY;
+            currentPlayer = lastMove.player; 
+            return true;
+        }
 };
 
 int main(){
     Gomoku game;
     while(true){
         game.printBoard();
-        cout << "Player " << game.getCurrentPlayer() << ", enter your move (row col): ";
+        cout << "玩家 " << game.getCurrentPlayer()
+             << "，請輸入列與欄（0～14，以空格分隔）"
+             << "（-1 -1：悔棋，-2 -2：重新開始，-3 -3：離開）：";
         int row, col;
 
         if(!(cin >> row >> col)){
-            cout << "Invalid input. Please enter two integers.\n";
-            cin.clear(); // clear the error flag
-            cin.ignore(numeric_limits<streamsize>::max(), '\n'); // discard invalid input
+            if (cin.eof()) break;
+            cout << "輸入錯誤，請輸入兩個整數。\n";
+            cin.clear(); // 清除輸入串流的錯誤狀態
+            cin.ignore(numeric_limits<streamsize>::max(), '\n'); // 丟棄本行剩餘的輸入
+            continue;
+        }
+
+        if (row == -3 && col == -3) break;
+
+        if (row == -2 && col == -2) {
+            game.resetGame();
+            cout << "遊戲已重新開始。\n";
+            continue;
+        }
+
+        if (row == -1 && col == -1) {
+            if (!game.undoMove()) {
+                cout << "目前沒有可以悔棋的紀錄。\n";
+            }
             continue;
         }
 
         if(!game.makeMove(row, col)){
-            cout << "Move could not be made. Try again.\n";
+            cout << "無法落子，請選擇棋盤範圍內的空位。\n";
             continue;
         }
 
-        if(game.checkWin(row, col)){
+        bool won = game.checkWin(row, col);
+        if(won || game.boardFull()){
             game.printBoard();
-            cout << "Player " << game.getCurrentPlayer() << " wins!\n";
-            break;
-        }
+            if (won) {
+                cout << "玩家 " << game.getCurrentPlayer() << " 獲勝！\n";
+            } else {
+                cout << "平手！\n";
+            }
 
-        if(game.boardFull()){
-            game.printBoard();
-            cout << "It's a draw!\n";
-            break;
+            char answer;
+            cout << "是否再玩一局？（y：是，n：否）：";
+            if (!(cin >> answer) || (answer != 'y' && answer != 'Y')) break;
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+            game.resetGame();
+            continue;
         }
 
         game.switchPlayer();
