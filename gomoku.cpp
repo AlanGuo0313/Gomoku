@@ -8,8 +8,11 @@
 
 #include <cmath>
 #include <string>
+#include <future>
+#include <chrono>
 
 #include "gomoku_game.h"
+#include "gomoku_ai.h"
 
 namespace {
 
@@ -23,6 +26,9 @@ constexpr int HIT_RADIUS = 16;
 constexpr int BUTTON_RESTART = 101;
 constexpr int BUTTON_UNDO = 102;
 constexpr int BUTTON_EXIT = 103;
+constexpr int SELECT_MODE = 104;
+constexpr int SELECT_DIFFICULTY = 105;
+constexpr UINT_PTR AI_TIMER = 1;
 
 Gomoku game;
 HFONT titleFont = nullptr;
@@ -30,6 +36,18 @@ HFONT bodyFont = nullptr;
 HWND undoButton = nullptr;
 int hoverRow = -1;
 int hoverCol = -1;
+HWND modeSelector = nullptr;
+HWND difficultySelector = nullptr;
+bool versusComputer = true;
+Difficulty difficulty = Difficulty::Normal;
+std::future<GomokuAI::Position> computerTask;
+unsigned gameRevision = 0;
+unsigned taskRevision = 0;
+
+bool isComputerTurn() {
+    return versusComputer && !game.isFinished() &&
+           game.currentPlayer() == Gomoku::WHITE;
+}
 
 int boardX(int col) {
     return BOARD_LEFT + col * GRID_SPACING;
@@ -138,7 +156,7 @@ void drawBoard(HDC dc) {
 }
 
 void drawStones(HDC dc) {
-    if (!game.isFinished() && game.isValidMove(hoverRow, hoverCol)) {
+    if (!game.isFinished() && !isComputerTurn() && game.isValidMove(hoverRow, hoverCol)) {
         drawCircle(dc, boardX(hoverCol), boardY(hoverRow), 12,
                    RGB(202, 180, 137), RGB(115, 137, 111));
     }
@@ -160,6 +178,9 @@ void drawStones(HDC dc) {
 }
 
 std::wstring gameStatus() {
+    if (isComputerTurn()) {
+        return L"電腦思考中";
+    }
     if (!game.isFinished()) {
         return game.currentPlayer() == Gomoku::BLACK ? L"黑棋落子" : L"白棋落子";
     }
@@ -193,12 +214,11 @@ void drawSidebar(HDC dc) {
     drawText(dc, lastMoveText, {648, 262, 912, 288}, bodyFont);
 
     drawPanel(dc, 624, 318, 300, 150, RGB(255, 255, 251));
-    drawText(dc, L"對弈小提示", {648, 332, 900, 364}, bodyFont);
-    drawText(dc, L"橫、直或斜線連成五子即獲勝", {648, 370, 912, 400}, bodyFont);
-    drawText(dc, L"紅點標示最後一手", {648, 400, 912, 430}, bodyFont);
-    drawText(dc, L"悔棋後由上一位玩家重新落子", {648, 430, 912, 460}, bodyFont);
+    drawText(dc, L"對弈模式", {642, 322, 906, 350}, bodyFont);
+    drawText(dc, L"電腦難度", {642, 392, 906, 420}, bodyFont);
     drawText(dc, L"遊戲操作", {636, 486, 910, 518}, bodyFont);
-    drawText(dc, L"自由五子棋 · 無禁手規則", {636, 654, 920, 687}, bodyFont);
+    drawText(dc, versusComputer ? L"你執黑棋 · 電腦執白棋" : L"雙人輪流落子 · 無禁手規則",
+             {636, 654, 920, 687}, bodyFont);
 }
 
 void drawGame(HDC dc, RECT client) {
@@ -207,7 +227,8 @@ void drawGame(HDC dc, RECT client) {
     DeleteObject(background);
 
     drawText(dc, L"五子棋", {36, 20, 600, 62}, titleFont);
-    drawText(dc, L"本機雙人  /  15 × 15", {650, 42, 925, 78}, bodyFont);
+    drawText(dc, versusComputer ? L"人機對弈  /  15 × 15" : L"本機雙人  /  15 × 15",
+             {650, 42, 925, 78}, bodyFont);
     drawBoard(dc);
     drawStones(dc);
     drawSidebar(dc);
@@ -219,6 +240,62 @@ void drawGame(HDC dc, RECT client) {
 void refreshWindow(HWND window) {
     EnableWindow(undoButton, !game.history().empty());
     InvalidateRect(window, nullptr, FALSE);
+}
+
+void restartMatch(HWND window) {
+    ++gameRevision; // 舊背景工作的結果即使稍後回來，也不再套用。
+    game.resetGame();
+    hoverRow = hoverCol = -1;
+    refreshWindow(window);
+}
+
+void undoTurn(HWND window) {
+    ++gameRevision;
+    if (versusComputer) {
+        game.undoToPlayer(Gomoku::BLACK);
+    } else {
+        game.undoMove();
+    }
+    hoverRow = hoverCol = -1;
+    refreshWindow(window);
+}
+
+// 計時器只收取結果或啟動工作，不在視窗執行緒中搜索棋步。
+void updateComputer(HWND window) {
+    using namespace std::chrono_literals;
+    if (computerTask.valid() && computerTask.wait_for(0ms) == std::future_status::ready) {
+        try {
+            const auto move = computerTask.get();
+            if (taskRevision == gameRevision && isComputerTurn()) {
+                game.makeMove(move.row, move.col);
+                refreshWindow(window);
+            }
+        } catch (...) {
+            // 背景計算失敗時改用快速策略，仍保持輪替正常。
+            if (taskRevision == gameRevision && isComputerTurn()) {
+                GomokuAI fallback;
+                const auto move = fallback.chooseMove(game, Difficulty::Normal);
+                game.makeMove(move.row, move.col);
+                refreshWindow(window);
+            }
+        }
+    }
+    if (isComputerTurn() && !computerTask.valid()) {
+        taskRevision = gameRevision;
+        const Gomoku snapshot = game;
+        const Difficulty selectedDifficulty = difficulty;
+        try {
+            computerTask = std::async(std::launch::async, [snapshot, selectedDifficulty] {
+                GomokuAI opponent;
+                return opponent.chooseMove(snapshot, selectedDifficulty);
+            });
+        } catch (...) {
+            GomokuAI fallback;
+            const auto move = fallback.chooseMove(game, Difficulty::Normal);
+            game.makeMove(move.row, move.col);
+            refreshWindow(window);
+        }
+    }
 }
 
 HFONT createFont(int height, int weight) {
@@ -245,6 +322,27 @@ void createControls(HWND window) {
     undoButton = createButton(window, L"悔棋", BUTTON_UNDO, {782, 530, 906, 576});
     createButton(window, L"離開遊戲", BUTTON_EXIT, {642, 594, 906, 640});
     EnableWindow(undoButton, FALSE);
+    auto selector = [&](int id, int y) {
+        HWND control = CreateWindowW(
+            L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+            CBS_DROPDOWNLIST | WS_VSCROLL, 642, y, 264, 160,
+            window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+            GetModuleHandleW(nullptr), nullptr);
+        SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(bodyFont), TRUE);
+        SendMessageW(control, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1), 26);
+        return control;
+    };
+    modeSelector = selector(SELECT_MODE, 354);
+    for (const wchar_t* label : {L"玩家對電腦", L"本機雙人"}) {
+        SendMessageW(modeSelector, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+    }
+    SendMessageW(modeSelector, CB_SETCURSEL, 0, 0);
+    difficultySelector = selector(SELECT_DIFFICULTY, 424);
+    for (const wchar_t* label : {L"簡單", L"普通", L"困難"}) {
+        SendMessageW(difficultySelector, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+    }
+    SendMessageW(difficultySelector, CB_SETCURSEL, 1, 0);
+    SetTimer(window, AI_TIMER, 60, nullptr);
 }
 
 void drawButton(const DRAWITEMSTRUCT& item) {
@@ -295,7 +393,7 @@ bool hitTestBoard(int x, int y, int& row, int& col) {
 void updateHover(HWND window, int x, int y) {
     int row = -1;
     int col = -1;
-    if (game.isFinished() || !hitTestBoard(x, y, row, col)) {
+    if (game.isFinished() || isComputerTurn() || !hitTestBoard(x, y, row, col)) {
         row = -1;
         col = -1;
     }
@@ -351,6 +449,7 @@ LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
         return 0;
 
     case WM_LBUTTONUP: {
+        if (isComputerTurn()) return 0;
         int row;
         int col;
         if (hitTestBoard(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), row, col) &&
@@ -362,19 +461,33 @@ LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
 
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case SELECT_MODE:
+        case SELECT_DIFFICULTY:
+            if (HIWORD(wParam) == CBN_SELCHANGE) {
+                versusComputer = SendMessageW(modeSelector, CB_GETCURSEL, 0, 0) == 0;
+                const int selected = static_cast<int>(
+                    SendMessageW(difficultySelector, CB_GETCURSEL, 0, 0));
+                difficulty = selected == 0 ? Difficulty::Easy :
+                             selected == 2 ? Difficulty::Hard : Difficulty::Normal;
+                EnableWindow(difficultySelector, versusComputer);
+                restartMatch(window);
+            }
+            return 0;
         case BUTTON_RESTART:
-            game.resetGame();
-            refreshWindow(window);
+            restartMatch(window);
             return 0;
         case BUTTON_UNDO:
-            game.undoMove();
-            refreshWindow(window);
+            undoTurn(window);
             return 0;
         case BUTTON_EXIT:
             DestroyWindow(window);
             return 0;
         }
         break;
+
+    case WM_TIMER:
+        if (wParam == AI_TIMER) updateComputer(window);
+        return 0;
 
     case WM_ERASEBKGND:
         return 1; // 背景已由雙緩衝一起繪製。
@@ -384,6 +497,8 @@ LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
         return 0;
 
     case WM_DESTROY:
+        KillTimer(window, AI_TIMER);
+        ++gameRevision;
         DeleteObject(titleFont);
         DeleteObject(bodyFont);
         PostQuitMessage(0);
@@ -435,7 +550,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int showCommand) {
     AdjustWindowRect(&size, style, FALSE);
 
     HWND window = CreateWindowW(
-        windowClass.lpszClassName, L"五子棋｜雙人對弈", style,
+        windowClass.lpszClassName, L"五子棋｜人機與雙人對弈", style,
         CW_USEDEFAULT, CW_USEDEFAULT, size.right - size.left, size.bottom - size.top,
         nullptr, nullptr, instance, nullptr
     );

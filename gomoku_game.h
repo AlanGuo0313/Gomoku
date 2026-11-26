@@ -56,6 +56,17 @@ public:
         return true;
     }
 
+    // 撤回到指定玩家上一手之前；人機模式可撤回一整輪。
+    bool undoToPlayer(int player) {
+        if (history_.empty()) return false;
+        do {
+            const int lastPlayer = history_.back().player;
+            undoMove();
+            if (lastPlayer == player) break;
+        } while (!history_.empty());
+        return true;
+    }
+
     void resetGame() {
         board_ = {};
         history_.clear();
